@@ -4,10 +4,17 @@ name: goose-on-aca
 metadata:
   template: goose-on-aca@0.0.1-beta
 
+workflows:
+  up:
+    steps:
+      - azd: provision
+      - azd: deploy --all
+
 infra:
   provider: bicep
   path: infra
   module: main
+
 
 services:
   goose-agent:

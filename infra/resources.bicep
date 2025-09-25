@@ -11,12 +11,13 @@ param resourceToken string
 
 var baseName = toLower('${environmentName}-${resourceToken}')
 var sanitized = toLower(replace(replace(environmentName, '-', ''), '_', ''))
-var containerRegistryName = take('acr${sanitized}${resourceToken}', 50)
-var storageAccountName = take('st${sanitized}${resourceToken}', 24)
+var sanitizedBase = empty(sanitized) ? 'env' : sanitized
+var containerRegistryName = take('acr${sanitizedBase}${resourceToken}00', 50)
+var storageAccountName = take('st${sanitizedBase}${resourceToken}000', 24)
 var identityName = 'id-${baseName}'
 var containerAppsEnvironmentName = 'cae-${baseName}'
-var ollamaAppName = 'ollama-${environmentName}'
-var gooseAppName = 'goose-${environmentName}'
+var ollamaAppName = 'ollama-${baseName}'
+var gooseAppName = 'goose-${baseName}'
 var seedScript = format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest', subscription().subscriptionId, resourceGroup().name, containerRegistryName)
 
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-06-01' = {
@@ -279,9 +280,6 @@ resource acrPushAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01-p
     principalId: userAssignedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [
-    containerRegistry
-  ]
 }
 
 resource acrReaderAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
@@ -292,9 +290,6 @@ resource acrReaderAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01
     principalId: userAssignedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [
-    containerRegistry
-  ]
 }
 
 resource acrContributorAssignment 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
@@ -305,14 +300,12 @@ resource acrContributorAssignment 'Microsoft.Authorization/roleAssignments@2020-
     principalId: userAssignedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [
-    containerRegistry
-  ]
 }
 
 resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: ollamaAppName
   location: location
+  tags: {'azd-service-name': 'ollama'}
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -382,6 +375,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
 resource gooseApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: gooseAppName
   location: location
+  tags: {'azd-service-name': 'goose-agent'}
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {

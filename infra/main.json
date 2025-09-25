@@ -5,38 +5,25 @@
     "_generator": {
       "name": "bicep",
       "version": "0.37.4.10188",
-      "templateHash": "16626817707095678344"
+      "templateHash": "14318812709927061015"
     }
   },
   "parameters": {
     "environmentName": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
       "metadata": {
-        "description": "Name of the environment"
+        "description": "Name of the environment that can be used as part of naming resource convention"
       }
     },
     "location": {
       "type": "string",
-      "minLength": 1,
       "metadata": {
         "description": "Primary location for all resources"
-      }
-    },
-    "principalId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Id of the user or app to assign application roles"
       }
     }
   },
   "variables": {
-    "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
-    "tags": {
-      "azd-env-name": "[parameters('environmentName')]"
-    }
+    "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]"
   },
   "resources": [
     {
@@ -44,7 +31,9 @@
       "apiVersion": "2021-04-01",
       "name": "[format('rg-{0}', parameters('environmentName'))]",
       "location": "[parameters('location')]",
-      "tags": "[variables('tags')]"
+      "tags": {
+        "azd-env-name": "[parameters('environmentName')]"
+      }
     },
     {
       "type": "Microsoft.Resources/deployments",
@@ -65,9 +54,6 @@
           },
           "resourceToken": {
             "value": "[variables('resourceToken')]"
-          },
-          "principalId": {
-            "value": "[parameters('principalId')]"
           }
         },
         "template": {
@@ -77,7 +63,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.37.4.10188",
-              "templateHash": "15406293753877073939"
+              "templateHash": "17518424561479921571"
             }
           },
           "parameters": {
@@ -90,7 +76,7 @@
             "environmentName": {
               "type": "string",
               "metadata": {
-                "description": "Environment name"
+                "description": "Environment name used for deriving resource names"
               }
             },
             "resourceToken": {
@@ -98,23 +84,24 @@
               "metadata": {
                 "description": "A suffix to provide resource naming uniqueness"
               }
-            },
-            "principalId": {
-              "type": "string",
-              "defaultValue": "",
-              "metadata": {
-                "description": "Id of the user or app to assign application roles"
-              }
             }
           },
           "variables": {
-            "resourceBaseName": "[format('{0}-{1}', parameters('environmentName'), parameters('resourceToken'))]"
+            "baseName": "[toLower(format('{0}-{1}', parameters('environmentName'), parameters('resourceToken')))]",
+            "sanitized": "[toLower(replace(replace(parameters('environmentName'), '-', ''), '_', ''))]",
+            "containerRegistryName": "[take(format('acr{0}{1}', variables('sanitized'), parameters('resourceToken')), 50)]",
+            "storageAccountName": "[take(format('st{0}{1}', variables('sanitized'), parameters('resourceToken')), 24)]",
+            "identityName": "[format('id-{0}', variables('baseName'))]",
+            "containerAppsEnvironmentName": "[format('cae-{0}', variables('baseName'))]",
+            "ollamaAppName": "[format('ollama-{0}', parameters('environmentName'))]",
+            "gooseAppName": "[format('goose-{0}', parameters('environmentName'))]",
+            "seedScript": "[format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest', subscription().subscriptionId, resourceGroup().name, variables('containerRegistryName'))]"
           },
           "resources": [
             {
               "type": "Microsoft.Network/virtualNetworks",
               "apiVersion": "2023-06-01",
-              "name": "[format('vnet-{0}', variables('resourceBaseName'))]",
+              "name": "[format('vnet-{0}', variables('baseName'))]",
               "location": "[parameters('location')]",
               "properties": {
                 "addressSpace": {
@@ -129,7 +116,7 @@
                       "addressPrefix": "10.0.0.0/23",
                       "delegations": [
                         {
-                          "name": "Microsoft.App/environments",
+                          "name": "aca-delegation",
                           "properties": {
                             "serviceName": "Microsoft.App/environments"
                           }
@@ -150,76 +137,114 @@
             {
               "type": "Microsoft.ContainerRegistry/registries",
               "apiVersion": "2023-07-01",
-              "name": "[format('cr{0}', replace(variables('resourceBaseName'), '-', ''))]",
+              "name": "[variables('containerRegistryName')]",
               "location": "[parameters('location')]",
               "sku": {
                 "name": "Basic"
               },
               "properties": {
-                "adminUserEnabled": false
+                "adminUserEnabled": false,
+                "zoneRedundancy": "Disabled"
               }
+            },
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2018-11-30",
+              "name": "[variables('identityName')]",
+              "location": "[parameters('location')]"
+            },
+            {
+              "type": "Microsoft.Resources/deploymentScripts",
+              "apiVersion": "2020-10-01",
+              "name": "seed-acr-images",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')))]": {}
+                }
+              },
+              "kind": "AzureCLI",
+              "properties": {
+                "azCliVersion": "2.61.0",
+                "retentionInterval": "P1D",
+                "timeout": "PT30M",
+                "cleanupPreference": "OnSuccess",
+                "scriptContent": "[variables('seedScript')]"
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'Contributor'))]",
+                "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'AcrPush'))]",
+                "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'Reader'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
             },
             {
               "type": "Microsoft.Storage/storageAccounts",
               "apiVersion": "2023-01-01",
-              "name": "[format('st{0}', replace(variables('resourceBaseName'), '-', ''))]",
+              "name": "[variables('storageAccountName')]",
               "location": "[parameters('location')]",
               "sku": {
-                "name": "Standard_LRS"
+                "name": "Premium_LRS"
               },
-              "kind": "StorageV2",
+              "kind": "FileStorage",
               "properties": {
-                "supportsHttpsTrafficOnly": true,
-                "minimumTlsVersion": "TLS1_2",
+                "publicNetworkAccess": "Disabled",
+                "supportsHttpsTrafficOnly": false,
+                "allowSharedKeyAccess": true,
                 "allowBlobPublicAccess": false,
                 "networkAcls": {
                   "defaultAction": "Deny",
-                  "bypass": "AzureServices"
+                  "bypass": "None"
                 }
               }
             },
             {
               "type": "Microsoft.Storage/storageAccounts/fileServices",
               "apiVersion": "2023-01-01",
-              "name": "[format('{0}/{1}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default')]",
+              "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
               "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]"
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
               "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
               "apiVersion": "2023-01-01",
-              "name": "[format('{0}/{1}/{2}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default', 'goose-local')]",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'goose-local')]",
               "properties": {
                 "enabledProtocols": "NFS",
+                "shareQuota": 256,
                 "rootSquash": "NoRootSquash"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
               ]
             },
             {
               "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
               "apiVersion": "2023-01-01",
-              "name": "[format('{0}/{1}/{2}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default', 'goose-config')]",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'goose-config')]",
               "properties": {
                 "enabledProtocols": "NFS",
+                "shareQuota": 128,
                 "rootSquash": "NoRootSquash"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
               ]
             },
             {
               "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
               "apiVersion": "2023-01-01",
-              "name": "[format('{0}/{1}/{2}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default', 'ollama-model')]",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'ollama-model')]",
               "properties": {
                 "enabledProtocols": "NFS",
+                "shareQuota": 1024,
                 "rootSquash": "NoRootSquash"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', format('st{0}', replace(variables('resourceBaseName'), '-', '')), 'default')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
               ]
             },
             {
@@ -231,33 +256,33 @@
             {
               "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
               "apiVersion": "2020-06-01",
-              "name": "[format('{0}/{1}', format('privatelink.file.{0}', environment().suffixes.storage), 'storage-link')]",
+              "name": "[format('{0}/{1}', format('privatelink.file.{0}', environment().suffixes.storage), format('{0}-link', format('vnet-{0}', variables('baseName'))))]",
               "location": "global",
               "properties": {
                 "registrationEnabled": false,
                 "virtualNetwork": {
-                  "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName')))]"
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName')))]"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.file.{0}', environment().suffixes.storage))]",
-                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName')))]"
+                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName')))]"
               ]
             },
             {
               "type": "Microsoft.Network/privateEndpoints",
               "apiVersion": "2023-06-01",
-              "name": "[format('pe-{0}', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]",
+              "name": "[format('{0}-pe', variables('storageAccountName'))]",
               "location": "[parameters('location')]",
               "properties": {
                 "subnet": {
-                  "id": "[format('{0}/subnets/pe-subnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName'))))]"
+                  "id": "[format('{0}/subnets/pe-subnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName'))))]"
                 },
                 "privateLinkServiceConnections": [
                   {
-                    "name": "storage-connection",
+                    "name": "[format('{0}-connection', variables('storageAccountName'))]",
                     "properties": {
-                      "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]",
+                      "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
                       "groupIds": [
                         "file"
                       ]
@@ -266,18 +291,18 @@
                 ]
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]",
-                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName')))]"
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName')))]"
               ]
             },
             {
               "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
               "apiVersion": "2023-06-01",
-              "name": "[format('{0}/{1}', format('pe-{0}', format('st{0}', replace(variables('resourceBaseName'), '-', ''))), 'default')]",
+              "name": "[format('{0}/{1}', format('{0}-pe', variables('storageAccountName')), 'default')]",
               "properties": {
                 "privateDnsZoneConfigs": [
                   {
-                    "name": "storage-config",
+                    "name": "file",
                     "properties": {
                       "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.file.{0}', environment().suffixes.storage))]"
                     }
@@ -286,20 +311,17 @@
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.file.{0}', environment().suffixes.storage))]",
-                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', format('st{0}', replace(variables('resourceBaseName'), '-', ''))))]"
+                "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-pe', variables('storageAccountName')))]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments",
-              "apiVersion": "2023-05-01",
-              "name": "[format('cae-{0}', variables('resourceBaseName'))]",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('containerAppsEnvironmentName')]",
               "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
               "properties": {
                 "vnetConfiguration": {
-                  "infrastructureSubnetId": "[format('{0}/subnets/aca-subnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName'))))]"
+                  "infrastructureSubnetId": "[format('{0}/subnets/aca-subnet', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName'))))]"
                 },
                 "workloadProfiles": [
                   {
@@ -308,97 +330,309 @@
                   },
                   {
                     "name": "GPU",
-                    "workloadProfileType": "Consumption-GPU-NC8as-T4",
-                    "minimumCount": 0,
-                    "maximumCount": 10
+                    "workloadProfileType": "Consumption-GPU-NC8as-T4"
                   }
                 ]
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('resourceBaseName')))]"
+                "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', variables('baseName')))]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
               "apiVersion": "2023-05-01",
-              "name": "[format('{0}/{1}', format('cae-{0}', variables('resourceBaseName')), 'goose-local-storage')]",
+              "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'goose-local-storage')]",
               "properties": {
-                "nfsAzureFile": {
-                  "server": "[format('{0}.file.{1}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), environment().suffixes.storage)]",
+                "azureFile": {
+                  "accountName": "[variables('storageAccountName')]",
                   "shareName": "goose-local",
-                  "accessMode": "ReadWrite"
+                  "accessMode": "ReadWrite",
+                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName')))]",
-                "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]"
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-local')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
               "apiVersion": "2023-05-01",
-              "name": "[format('{0}/{1}', format('cae-{0}', variables('resourceBaseName')), 'goose-config-storage')]",
+              "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'goose-config-storage')]",
               "properties": {
-                "nfsAzureFile": {
-                  "server": "[format('{0}.file.{1}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), environment().suffixes.storage)]",
+                "azureFile": {
+                  "accountName": "[variables('storageAccountName')]",
                   "shareName": "goose-config",
-                  "accessMode": "ReadWrite"
+                  "accessMode": "ReadWrite",
+                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName')))]",
-                "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]"
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-config')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
               "apiVersion": "2023-05-01",
-              "name": "[format('{0}/{1}', format('cae-{0}', variables('resourceBaseName')), 'ollama-model-storage')]",
+              "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'ollama-model-storage')]",
               "properties": {
-                "nfsAzureFile": {
-                  "server": "[format('{0}.file.{1}', format('st{0}', replace(variables('resourceBaseName'), '-', '')), environment().suffixes.storage)]",
+                "azureFile": {
+                  "accountName": "[variables('storageAccountName')]",
                   "shareName": "ollama-model",
-                  "accessMode": "ReadWrite"
+                  "accessMode": "ReadWrite",
+                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName')))]",
-                "[resourceId('Microsoft.Storage/storageAccounts', format('st{0}', replace(variables('resourceBaseName'), '-', '')))]"
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'ollama-model')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
-              "condition": "[not(empty(parameters('principalId')))]",
               "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', format('cr{0}', replace(variables('resourceBaseName'), '-', '')))]",
-              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', replace(variables('resourceBaseName'), '-', ''))), resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName'))), 'AcrPull')]",
+              "apiVersion": "2020-04-01-preview",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', variables('containerRegistryName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'AcrPull')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-                "principalId": "[reference(resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName'))), '2023-05-01', 'full').identity.principalId]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2018-11-30').principalId]",
                 "principalType": "ServicePrincipal"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName')))]",
-                "[resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', replace(variables('resourceBaseName'), '-', '')))]"
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2020-04-01-preview",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', variables('containerRegistryName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'AcrPush')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8311e382-0749-4cb8-b61a-304f252e45ec')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2018-11-30').principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2020-04-01-preview",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', variables('containerRegistryName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'Reader')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2018-11-30').principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2020-04-01-preview",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', variables('containerRegistryName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), variables('identityName'), 'Contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2018-11-30').principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('ollamaAppName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')))]": {}
+                }
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "workloadProfileName": "GPU",
+                "configuration": {
+                  "ingress": {
+                    "external": false,
+                    "targetPort": 11434
+                  },
+                  "registries": [
+                    {
+                      "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), '2023-07-01').loginServer]",
+                      "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "ollama",
+                      "image": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+                      "env": [
+                        {
+                          "name": "OLLAMA_CONTEXT_LENGTH",
+                          "value": "32768"
+                        },
+                        {
+                          "name": "OLLAMA_HOST",
+                          "value": "0.0.0.0:11434"
+                        }
+                      ],
+                      "resources": {
+                        "cpu": 4,
+                        "memory": "16Gi"
+                      },
+                      "volumeMounts": [
+                        {
+                          "volumeName": "ollama-models",
+                          "mountPath": "/root/.ollama"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  },
+                  "volumes": [
+                    {
+                      "name": "ollama-models",
+                      "storageType": "AzureFile",
+                      "storageName": "ollama-model-storage"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'ollama-model-storage')]",
+                "[resourceId('Microsoft.Resources/deploymentScripts', 'seed-acr-images')]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('gooseAppName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')))]": {}
+                }
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "workloadProfileName": "Consumption",
+                "configuration": {
+                  "registries": [
+                    {
+                      "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), '2023-07-01').loginServer]",
+                      "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+                    }
+                  ],
+                  "secrets": []
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "goose",
+                      "image": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+                      "env": [
+                        {
+                          "name": "OLLAMA_HOST",
+                          "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('ollamaAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+                        }
+                      ],
+                      "resources": {
+                        "cpu": 1,
+                        "memory": "2Gi"
+                      },
+                      "volumeMounts": [
+                        {
+                          "volumeName": "goose-local",
+                          "mountPath": "/root/.local"
+                        },
+                        {
+                          "volumeName": "goose-config",
+                          "mountPath": "/root/.config"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  },
+                  "volumes": [
+                    {
+                      "name": "goose-local",
+                      "storageType": "AzureFile",
+                      "storageName": "goose-local-storage"
+                    },
+                    {
+                      "name": "goose-config",
+                      "storageType": "AzureFile",
+                      "storageName": "goose-config-storage"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'goose-config-storage')]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'goose-local-storage')]",
+                "[resourceId('Microsoft.App/containerApps', variables('ollamaAppName'))]",
+                "[resourceId('Microsoft.Resources/deploymentScripts', 'seed-acr-images')]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
               ]
             }
           ],
           "outputs": {
             "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
               "type": "string",
-              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', replace(variables('resourceBaseName'), '-', ''))), '2023-07-01').loginServer]"
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), '2023-07-01').loginServer]"
             },
             "AZURE_CONTAINER_REGISTRY_NAME": {
               "type": "string",
-              "value": "[format('cr{0}', replace(variables('resourceBaseName'), '-', ''))]"
+              "value": "[variables('containerRegistryName')]"
             },
             "AZURE_CONTAINER_APPS_ENVIRONMENT_ID": {
               "type": "string",
-              "value": "[resourceId('Microsoft.App/managedEnvironments', format('cae-{0}', variables('resourceBaseName')))]"
+              "value": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]"
             },
             "AZURE_CONTAINER_APPS_ENVIRONMENT_NAME": {
               "type": "string",
-              "value": "[format('cae-{0}', variables('resourceBaseName'))]"
+              "value": "[variables('containerAppsEnvironmentName')]"
+            },
+            "ACA_ENVIRONMENT_IDENTITY_ID": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+            },
+            "GOOSE_APP_NAME": {
+              "type": "string",
+              "value": "[variables('gooseAppName')]"
+            },
+            "OLLAMA_APP_NAME": {
+              "type": "string",
+              "value": "[variables('ollamaAppName')]"
             }
           }
         }
@@ -436,6 +670,14 @@
     "AZURE_CONTAINER_APPS_ENVIRONMENT_NAME": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME.value]"
+    },
+    "AZURE_CONTAINERAPPS_SERVICE_GOOSE_AGENT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.GOOSE_APP_NAME.value]"
+    },
+    "AZURE_CONTAINERAPPS_SERVICE_OLLAMA_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.OLLAMA_APP_NAME.value]"
     }
   }
 }

@@ -1,27 +1,18 @@
-targetScope = 'subscription'
+targetScope = 'resourceGroup'
 
 @description('Name of the environment that can be used as part of naming resource convention')
 param environmentName string
 
 @description('Primary location for all resources')
-param location string = deployment().location
+param location string
 
 // Variables
-var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
+var resourceToken = take(toLower(uniqueString(subscription().id, environmentName, location)), 5)
 
-// Resource Group
-resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: 'rg-${environmentName}'
-  location: location
-  tags: {
-    'azd-env-name': environmentName
-  }
-}
 
 // Main infrastructure
 module resources 'resources.bicep' = {
   name: 'resources'
-  scope: rg
   params: {
     location: location
     environmentName: environmentName
@@ -32,7 +23,6 @@ module resources 'resources.bicep' = {
 // Outputs
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
-output AZURE_RESOURCE_GROUP string = rg.name
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
 output AZURE_CONTAINER_REGISTRY_NAME string = resources.outputs.AZURE_CONTAINER_REGISTRY_NAME
 output AZURE_CONTAINER_APPS_ENVIRONMENT_ID string = resources.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_ID

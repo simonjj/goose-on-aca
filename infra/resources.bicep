@@ -125,7 +125,7 @@ resource gooseLocalShare 'Microsoft.Storage/storageAccounts/fileServices/shares@
   name: 'goose-local'
   properties: {
     enabledProtocols: 'NFS'
-    shareQuota: 256
+    shareQuota: 100 
     rootSquash: 'NoRootSquash'
   }
 }
@@ -135,7 +135,7 @@ resource gooseConfigShare 'Microsoft.Storage/storageAccounts/fileServices/shares
   name: 'goose-config'
   properties: {
     enabledProtocols: 'NFS'
-    shareQuota: 128
+    shareQuota: 100
     rootSquash: 'NoRootSquash'
   }
 }
@@ -223,41 +223,39 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01'
   }
 }
 
-resource gooseLocalStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+
+resource gooseLocalStorage 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = {
   parent: containerAppsEnvironment
   name: 'goose-local-storage'
   properties: {
-    azureFile: {
-      accountName: storageAccount.name
-      shareName: gooseLocalShare.name
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      shareName: '/${storageAccount.name}/${gooseLocalShare.name}'
       accessMode: 'ReadWrite'
-      accountKey: storageAccount.listKeys().keys[0].value
     }
   }
 }
 
-resource gooseConfigStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+resource gooseConfigStorage 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = {
   parent: containerAppsEnvironment
   name: 'goose-config-storage'
   properties: {
-    azureFile: {
-      accountName: storageAccount.name
-      shareName: gooseConfigShare.name
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      shareName: '/${storageAccount.name}/${gooseConfigShare.name}'
       accessMode: 'ReadWrite'
-      accountKey: storageAccount.listKeys().keys[0].value
     }
   }
 }
 
-resource ollamaModelStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+resource ollamaModelStorage 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = {
   parent: containerAppsEnvironment
   name: 'ollama-model-storage'
   properties: {
-    azureFile: {
-      accountName: storageAccount.name
-      shareName: ollamaModelShare.name
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      shareName: '/${storageAccount.name}/${ollamaModelShare.name}'
       accessMode: 'ReadWrite'
-      accountKey: storageAccount.listKeys().keys[0].value
     }
   }
 }
@@ -302,7 +300,7 @@ resource acrContributorAssignment 'Microsoft.Authorization/roleAssignments@2020-
   }
 }
 
-resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
   name: ollamaAppName
   location: location
   tags: {'azd-service-name': 'ollama'}
@@ -340,14 +338,10 @@ resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'OLLAMA_CONTEXT_LENGTH'
               value: '32768'
             }
-            {
-              name: 'OLLAMA_HOST'
-              value: '0.0.0.0:11434'
-            }
           ]
           resources: {
-            cpu: 4
-            memory: '16Gi'
+            cpu: 8
+            memory: '56Gi'
           }
           volumeMounts: [
             {
@@ -364,7 +358,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
       volumes: [
         {
           name: 'ollama-models'
-          storageType: 'AzureFile'
+          storageType: 'NfsAzureFile'
           storageName: ollamaModelStorage.name
         }
       ]
@@ -372,7 +366,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource gooseApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
   name: gooseAppName
   location: location
   tags: {'azd-service-name': 'goose-agent'}
@@ -405,12 +399,12 @@ resource gooseApp 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             {
               name: 'OLLAMA_HOST'
-              value: 'https://${ollamaApp.properties.configuration.ingress.fqdn}'
+              value: '${ollamaApp.properties.configuration.ingress.fqdn}'
             }
           ]
           resources: {
-            cpu: 1
-            memory: '2Gi'
+            cpu: 2
+            memory: '4Gi'
           }
           volumeMounts: [
             {
@@ -431,13 +425,15 @@ resource gooseApp 'Microsoft.App/containerApps@2024-03-01' = {
       volumes: [
         {
           name: 'goose-local'
-          storageType: 'AzureFile'
+          storageType: 'NfsAzureFile'
           storageName: gooseLocalStorage.name
+          mountOptions: 'vers=4.1'
         }
         {
           name: 'goose-config'
-          storageType: 'AzureFile'
+          storageType: 'NfsAzureFile'
           storageName: gooseConfigStorage.name
+          mountOptions: 'vers=4.1'
         }
       ]
     }

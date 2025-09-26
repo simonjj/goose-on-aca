@@ -1,11 +1,11 @@
 {
-  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
     "_generator": {
       "name": "bicep",
       "version": "0.37.4.10188",
-      "templateHash": "14318812709927061015"
+      "templateHash": "11849108821996028141"
     }
   },
   "parameters": {
@@ -23,23 +23,13 @@
     }
   },
   "variables": {
-    "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]"
+    "resourceToken": "[take(toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location'))), 5)]"
   },
   "resources": [
-    {
-      "type": "Microsoft.Resources/resourceGroups",
-      "apiVersion": "2021-04-01",
-      "name": "[format('rg-{0}', parameters('environmentName'))]",
-      "location": "[parameters('location')]",
-      "tags": {
-        "azd-env-name": "[parameters('environmentName')]"
-      }
-    },
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2022-09-01",
       "name": "resources",
-      "resourceGroup": "[format('rg-{0}', parameters('environmentName'))]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
@@ -63,7 +53,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.37.4.10188",
-              "templateHash": "17518424561479921571"
+              "templateHash": "5953020234842227482"
             }
           },
           "parameters": {
@@ -89,12 +79,13 @@
           "variables": {
             "baseName": "[toLower(format('{0}-{1}', parameters('environmentName'), parameters('resourceToken')))]",
             "sanitized": "[toLower(replace(replace(parameters('environmentName'), '-', ''), '_', ''))]",
-            "containerRegistryName": "[take(format('acr{0}{1}', variables('sanitized'), parameters('resourceToken')), 50)]",
-            "storageAccountName": "[take(format('st{0}{1}', variables('sanitized'), parameters('resourceToken')), 24)]",
+            "sanitizedBase": "[if(empty(variables('sanitized')), 'env', variables('sanitized'))]",
+            "containerRegistryName": "[take(format('acr{0}{1}00', variables('sanitizedBase'), parameters('resourceToken')), 50)]",
+            "storageAccountName": "[take(format('st{0}{1}000', variables('sanitizedBase'), parameters('resourceToken')), 24)]",
             "identityName": "[format('id-{0}', variables('baseName'))]",
             "containerAppsEnvironmentName": "[format('cae-{0}', variables('baseName'))]",
-            "ollamaAppName": "[format('ollama-{0}', parameters('environmentName'))]",
-            "gooseAppName": "[format('goose-{0}', parameters('environmentName'))]",
+            "ollamaAppName": "[format('ollama-{0}', variables('baseName'))]",
+            "gooseAppName": "[format('goose-{0}', variables('baseName'))]",
             "seedScript": "[format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest', subscription().subscriptionId, resourceGroup().name, variables('containerRegistryName'))]"
           },
           "resources": [
@@ -340,56 +331,50 @@
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-02-02-preview",
               "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'goose-local-storage')]",
               "properties": {
-                "azureFile": {
-                  "accountName": "[variables('storageAccountName')]",
+                "nfsAzureFile": {
+                  "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
                   "shareName": "goose-local",
-                  "accessMode": "ReadWrite",
-                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
+                  "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-local')]",
-                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-local')]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-02-02-preview",
               "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'goose-config-storage')]",
               "properties": {
-                "azureFile": {
-                  "accountName": "[variables('storageAccountName')]",
+                "nfsAzureFile": {
+                  "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
                   "shareName": "goose-config",
-                  "accessMode": "ReadWrite",
-                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
+                  "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-config')]",
-                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-config')]"
               ]
             },
             {
               "type": "Microsoft.App/managedEnvironments/storages",
-              "apiVersion": "2023-05-01",
+              "apiVersion": "2025-02-02-preview",
               "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'ollama-model-storage')]",
               "properties": {
-                "azureFile": {
-                  "accountName": "[variables('storageAccountName')]",
+                "nfsAzureFile": {
+                  "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
                   "shareName": "ollama-model",
-                  "accessMode": "ReadWrite",
-                  "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]"
+                  "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'ollama-model')]",
-                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'ollama-model')]"
               ]
             },
             {
@@ -457,6 +442,9 @@
               "apiVersion": "2024-03-01",
               "name": "[variables('ollamaAppName')]",
               "location": "[parameters('location')]",
+              "tags": {
+                "azd-service-name": "ollama"
+              },
               "identity": {
                 "type": "UserAssigned",
                 "userAssignedIdentities": {
@@ -487,15 +475,11 @@
                         {
                           "name": "OLLAMA_CONTEXT_LENGTH",
                           "value": "32768"
-                        },
-                        {
-                          "name": "OLLAMA_HOST",
-                          "value": "0.0.0.0:11434"
                         }
                       ],
                       "resources": {
-                        "cpu": 4,
-                        "memory": "16Gi"
+                        "cpu": 8,
+                        "memory": "56Gi"
                       },
                       "volumeMounts": [
                         {
@@ -531,6 +515,9 @@
               "apiVersion": "2024-03-01",
               "name": "[variables('gooseAppName')]",
               "location": "[parameters('location')]",
+              "tags": {
+                "azd-service-name": "goose-agent"
+              },
               "identity": {
                 "type": "UserAssigned",
                 "userAssignedIdentities": {
@@ -557,12 +544,12 @@
                       "env": [
                         {
                           "name": "OLLAMA_HOST",
-                          "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('ollamaAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+                          "value": "[format('{0}', reference(resourceId('Microsoft.App/containerApps', variables('ollamaAppName')), '2024-03-01').configuration.ingress.fqdn)]"
                         }
                       ],
                       "resources": {
-                        "cpu": 1,
-                        "memory": "2Gi"
+                        "cpu": 2,
+                        "memory": "4Gi"
                       },
                       "volumeMounts": [
                         {
@@ -636,10 +623,7 @@
             }
           }
         }
-      },
-      "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}', parameters('environmentName')))]"
-      ]
+      }
     }
   ],
   "outputs": {
@@ -651,33 +635,29 @@
       "type": "string",
       "value": "[tenant().tenantId]"
     },
-    "AZURE_RESOURCE_GROUP": {
-      "type": "string",
-      "value": "[format('rg-{0}', parameters('environmentName'))]"
-    },
     "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT.value]"
     },
     "AZURE_CONTAINER_REGISTRY_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_REGISTRY_NAME.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_REGISTRY_NAME.value]"
     },
     "AZURE_CONTAINER_APPS_ENVIRONMENT_ID": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_ID.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_ID.value]"
     },
     "AZURE_CONTAINER_APPS_ENVIRONMENT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME.value]"
     },
     "AZURE_CONTAINERAPPS_SERVICE_GOOSE_AGENT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.GOOSE_APP_NAME.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.GOOSE_APP_NAME.value]"
     },
     "AZURE_CONTAINERAPPS_SERVICE_OLLAMA_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}', parameters('environmentName'))), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.OLLAMA_APP_NAME.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.OLLAMA_APP_NAME.value]"
     }
   }
 }

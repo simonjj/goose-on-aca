@@ -6,6 +6,10 @@ param environmentName string
 @description('Primary location for all resources')
 param location string
 
+@description('Password for nginx auth proxy basic authentication')
+@secure()
+param proxyAuthPassword string
+
 // Variables
 var resourceToken = take(toLower(uniqueString(subscription().id, environmentName, location)), 5)
 
@@ -17,6 +21,7 @@ module resources 'resources.bicep' = {
     location: location
     environmentName: environmentName
     resourceToken: resourceToken
+    proxyAuthPassword: proxyAuthPassword
   }
 }
 
@@ -29,3 +34,4 @@ output AZURE_CONTAINER_APPS_ENVIRONMENT_ID string = resources.outputs.AZURE_CONT
 output AZURE_CONTAINER_APPS_ENVIRONMENT_NAME string = resources.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME
 output AZURE_CONTAINERAPPS_SERVICE_GOOSE_AGENT_NAME string = resources.outputs.GOOSE_APP_NAME
 output AZURE_CONTAINERAPPS_SERVICE_OLLAMA_NAME string = resources.outputs.OLLAMA_APP_NAME
+output AZURE_CONTAINERAPPS_SERVICE_NGINX_AUTH_PROXY_NAME string = resources.outputs.NGINX_AUTH_PROXY_APP_NAME

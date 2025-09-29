@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.37.4.10188",
-      "templateHash": "11849108821996028141"
+      "templateHash": "8252931203584027688"
     }
   },
   "parameters": {
@@ -19,6 +19,12 @@
       "type": "string",
       "metadata": {
         "description": "Primary location for all resources"
+      }
+    },
+    "proxyAuthPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Password for nginx auth proxy basic authentication"
       }
     }
   },
@@ -44,6 +50,9 @@
           },
           "resourceToken": {
             "value": "[variables('resourceToken')]"
+          },
+          "proxyAuthPassword": {
+            "value": "[parameters('proxyAuthPassword')]"
           }
         },
         "template": {
@@ -53,7 +62,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.37.4.10188",
-              "templateHash": "5953020234842227482"
+              "templateHash": "3896500531111835885"
             }
           },
           "parameters": {
@@ -74,6 +83,19 @@
               "metadata": {
                 "description": "A suffix to provide resource naming uniqueness"
               }
+            },
+            "proxyAuthUser": {
+              "type": "string",
+              "defaultValue": "admin",
+              "metadata": {
+                "description": "Username for nginx auth proxy basic authentication"
+              }
+            },
+            "proxyAuthPassword": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Password for nginx auth proxy basic authentication"
+              }
             }
           },
           "variables": {
@@ -86,7 +108,8 @@
             "containerAppsEnvironmentName": "[format('cae-{0}', variables('baseName'))]",
             "ollamaAppName": "[format('ollama-{0}', variables('baseName'))]",
             "gooseAppName": "[format('goose-{0}', variables('baseName'))]",
-            "seedScript": "[format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest', subscription().subscriptionId, resourceGroup().name, variables('containerRegistryName'))]"
+            "nginxAuthProxyAppName": "[format('proxy-{0}', variables('baseName'))]",
+            "seedScript": "[format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image nginx-auth-proxy:latest', subscription().subscriptionId, resourceGroup().name, variables('containerRegistryName'))]"
           },
           "resources": [
             {
@@ -205,7 +228,7 @@
               "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'goose-local')]",
               "properties": {
                 "enabledProtocols": "NFS",
-                "shareQuota": 256,
+                "shareQuota": 100,
                 "rootSquash": "NoRootSquash"
               },
               "dependsOn": [
@@ -218,7 +241,20 @@
               "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'goose-config')]",
               "properties": {
                 "enabledProtocols": "NFS",
-                "shareQuota": 128,
+                "shareQuota": 100,
+                "rootSquash": "NoRootSquash"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'goose-workspace')]",
+              "properties": {
+                "enabledProtocols": "NFS",
+                "shareQuota": 100,
                 "rootSquash": "NoRootSquash"
               },
               "dependsOn": [
@@ -336,13 +372,14 @@
               "properties": {
                 "nfsAzureFile": {
                   "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
-                  "shareName": "goose-local",
+                  "shareName": "[format('/{0}/{1}', variables('storageAccountName'), 'goose-local')]",
                   "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-local')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-local')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
@@ -352,13 +389,31 @@
               "properties": {
                 "nfsAzureFile": {
                   "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
-                  "shareName": "goose-config",
+                  "shareName": "[format('/{0}/{1}', variables('storageAccountName'), 'goose-config')]",
                   "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-config')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-config')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments/storages",
+              "apiVersion": "2025-02-02-preview",
+              "name": "[format('{0}/{1}', variables('containerAppsEnvironmentName'), 'goose-workspace-storage')]",
+              "properties": {
+                "nfsAzureFile": {
+                  "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
+                  "shareName": "[format('/{0}/{1}', variables('storageAccountName'), 'goose-workspace')]",
+                  "accessMode": "ReadWrite"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'goose-workspace')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
@@ -368,13 +423,14 @@
               "properties": {
                 "nfsAzureFile": {
                   "server": "[format('{0}.privatelink.file.core.windows.net', variables('storageAccountName'))]",
-                  "shareName": "ollama-model",
+                  "shareName": "[format('/{0}/{1}', variables('storageAccountName'), 'ollama-model')]",
                   "accessMode": "ReadWrite"
                 }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'ollama-model')]"
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'ollama-model')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
               ]
             },
             {
@@ -439,7 +495,7 @@
             },
             {
               "type": "Microsoft.App/containerApps",
-              "apiVersion": "2024-03-01",
+              "apiVersion": "2025-02-02-preview",
               "name": "[variables('ollamaAppName')]",
               "location": "[parameters('location')]",
               "tags": {
@@ -467,6 +523,27 @@
                   ]
                 },
                 "template": {
+                  "initContainers": [
+                    {
+                      "name": "ollama-prefetch",
+                      "image": "docker.io/ollama/ollama",
+                      "command": [
+                        "/bin/sh",
+                        "-c",
+                        "set -euo pipefail; ollama pull qwen3:14b"
+                      ],
+                      "resources": {
+                        "cpu": 2,
+                        "memory": "4Gi"
+                      },
+                      "volumeMounts": [
+                        {
+                          "volumeName": "ollama-models",
+                          "mountPath": "/root/.ollama"
+                        }
+                      ]
+                    }
+                  ],
                   "containers": [
                     {
                       "name": "ollama",
@@ -496,7 +573,7 @@
                   "volumes": [
                     {
                       "name": "ollama-models",
-                      "storageType": "AzureFile",
+                      "storageType": "NfsAzureFile",
                       "storageName": "ollama-model-storage"
                     }
                   ]
@@ -512,7 +589,7 @@
             },
             {
               "type": "Microsoft.App/containerApps",
-              "apiVersion": "2024-03-01",
+              "apiVersion": "2025-02-02-preview",
               "name": "[variables('gooseAppName')]",
               "location": "[parameters('location')]",
               "tags": {
@@ -528,6 +605,12 @@
                 "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
                 "workloadProfileName": "Consumption",
                 "configuration": {
+                  "ingress": {
+                    "external": false,
+                    "targetPort": 3000,
+                    "transport": "Auto",
+                    "allowInsecure": true
+                  },
                   "registries": [
                     {
                       "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), '2023-07-01').loginServer]",
@@ -544,7 +627,7 @@
                       "env": [
                         {
                           "name": "OLLAMA_HOST",
-                          "value": "[format('{0}', reference(resourceId('Microsoft.App/containerApps', variables('ollamaAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+                          "value": "[format('{0}', reference(resourceId('Microsoft.App/containerApps', variables('ollamaAppName')), '2025-02-02-preview').configuration.ingress.fqdn)]"
                         }
                       ],
                       "resources": {
@@ -559,6 +642,10 @@
                         {
                           "volumeName": "goose-config",
                           "mountPath": "/root/.config"
+                        },
+                        {
+                          "volumeName": "goose-workspace",
+                          "mountPath": "/workspace"
                         }
                       ]
                     }
@@ -570,13 +657,21 @@
                   "volumes": [
                     {
                       "name": "goose-local",
-                      "storageType": "AzureFile",
-                      "storageName": "goose-local-storage"
+                      "storageType": "NfsAzureFile",
+                      "storageName": "goose-local-storage",
+                      "mountOptions": "vers=4.1"
                     },
                     {
                       "name": "goose-config",
-                      "storageType": "AzureFile",
-                      "storageName": "goose-config-storage"
+                      "storageType": "NfsAzureFile",
+                      "storageName": "goose-config-storage",
+                      "mountOptions": "vers=4.1"
+                    },
+                    {
+                      "name": "goose-workspace",
+                      "storageType": "NfsAzureFile",
+                      "storageName": "goose-workspace-storage",
+                      "mountOptions": "vers=4.1"
                     }
                   ]
                 }
@@ -586,7 +681,88 @@
                 "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
                 "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'goose-config-storage')]",
                 "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'goose-local-storage')]",
+                "[resourceId('Microsoft.App/managedEnvironments/storages', variables('containerAppsEnvironmentName'), 'goose-workspace-storage')]",
                 "[resourceId('Microsoft.App/containerApps', variables('ollamaAppName'))]",
+                "[resourceId('Microsoft.Resources/deploymentScripts', 'seed-acr-images')]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2025-02-02-preview",
+              "name": "[variables('nginxAuthProxyAppName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "azd-service-name": "nginx-auth-proxy"
+              },
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')))]": {}
+                }
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "workloadProfileName": "Consumption",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 80,
+                    "transport": "Auto",
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName')), '2023-07-01').loginServer]",
+                      "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+                    }
+                  ],
+                  "secrets": [
+                    {
+                      "name": "basic-auth-password",
+                      "value": "[parameters('proxyAuthPassword')]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "nginx-auth-proxy",
+                      "image": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+                      "env": [
+                        {
+                          "name": "BACKEND_URL",
+                          "value": "[format('http://{0}', reference(resourceId('Microsoft.App/containerApps', variables('gooseAppName')), '2025-02-02-preview').configuration.ingress.fqdn)]"
+                        },
+                        {
+                          "name": "BASIC_AUTH_USER",
+                          "value": "[parameters('proxyAuthUser')]"
+                        },
+                        {
+                          "name": "BASIC_AUTH_PASSWORD",
+                          "secretRef": "basic-auth-password"
+                        },
+                        {
+                          "name": "BACKEND_TIMEOUT",
+                          "value": "600"
+                        }
+                      ],
+                      "resources": {
+                        "cpu": "0.5",
+                        "memory": "1Gi"
+                      }
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppsEnvironmentName'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('containerRegistryName'))]",
+                "[resourceId('Microsoft.App/containerApps', variables('gooseAppName'))]",
                 "[resourceId('Microsoft.Resources/deploymentScripts', 'seed-acr-images')]",
                 "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
               ]
@@ -620,6 +796,10 @@
             "OLLAMA_APP_NAME": {
               "type": "string",
               "value": "[variables('ollamaAppName')]"
+            },
+            "NGINX_AUTH_PROXY_APP_NAME": {
+              "type": "string",
+              "value": "[variables('nginxAuthProxyAppName')]"
             }
           }
         }
@@ -658,6 +838,10 @@
     "AZURE_CONTAINERAPPS_SERVICE_OLLAMA_NAME": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.OLLAMA_APP_NAME.value]"
+    },
+    "AZURE_CONTAINERAPPS_SERVICE_NGINX_AUTH_PROXY_NAME": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.NGINX_AUTH_PROXY_APP_NAME.value]"
     }
   }
 }

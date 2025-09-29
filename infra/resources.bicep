@@ -9,6 +9,15 @@ param environmentName string
 @description('A suffix to provide resource naming uniqueness')
 param resourceToken string
 
+
+
+@description('Username for nginx auth proxy basic authentication')
+param proxyAuthUser string = 'admin'
+
+@description('Password for nginx auth proxy basic authentication')
+@secure()
+param proxyAuthPassword string
+
 var baseName = toLower('${environmentName}-${resourceToken}')
 var sanitized = toLower(replace(replace(environmentName, '-', ''), '_', ''))
 var sanitizedBase = empty(sanitized) ? 'env' : sanitized
@@ -18,7 +27,8 @@ var identityName = 'id-${baseName}'
 var containerAppsEnvironmentName = 'cae-${baseName}'
 var ollamaAppName = 'ollama-${baseName}'
 var gooseAppName = 'goose-${baseName}'
-var seedScript = format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest', subscription().subscriptionId, resourceGroup().name, containerRegistryName)
+var nginxAuthProxyAppName = 'proxy-${baseName}'
+var seedScript = format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image nginx-auth-proxy:latest', subscription().subscriptionId, resourceGroup().name, containerRegistryName)
 
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-06-01' = {
   name: 'vnet-${baseName}'
@@ -70,6 +80,8 @@ resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@
   name: identityName
   location: location
 }
+
+
 
 resource seedImages 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
   name: 'seed-acr-images'
@@ -139,6 +151,17 @@ resource gooseConfigShare 'Microsoft.Storage/storageAccounts/fileServices/shares
     rootSquash: 'NoRootSquash'
   }
 }
+
+resource gooseWorkspaceShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+  parent: fileService
+  name: 'goose-workspace'
+  properties: {
+    enabledProtocols: 'NFS'
+    shareQuota: 100
+    rootSquash: 'NoRootSquash'
+  }
+}
+
 
 resource ollamaModelShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
   parent: fileService
@@ -248,6 +271,18 @@ resource gooseConfigStorage 'Microsoft.App/managedEnvironments/storages@2025-02-
   }
 }
 
+resource gooseWorkspaceStorage 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = {
+  parent: containerAppsEnvironment
+  name: 'goose-workspace-storage'
+  properties: {
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      shareName: '/${storageAccount.name}/${gooseWorkspaceShare.name}'
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
 resource ollamaModelStorage 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = {
   parent: containerAppsEnvironment
   name: 'ollama-model-storage'
@@ -329,6 +364,27 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
       ]
     }
     template: {
+      initContainers: [
+        {
+          name: 'ollama-prefetch'
+          image: 'docker.io/ollama/ollama'
+          command: [
+            '/bin/sh'
+            '-c'
+            'set -euo pipefail; ollama pull qwen3:14b'
+          ]
+          resources: {
+            cpu: 2
+            memory: '4Gi'
+          }
+          volumeMounts: [
+            {
+              volumeName: 'ollama-models'
+              mountPath: '/root/.ollama'
+            }
+          ]
+        }
+      ]
       containers: [
         {
           name: 'ollama'
@@ -337,6 +393,10 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
             {
               name: 'OLLAMA_CONTEXT_LENGTH'
               value: '32768'
+            }
+            {
+                name: 'OLLAMA_KEEP_ALIVE'
+                value: '15m'
             }
           ]
           resources: {
@@ -383,6 +443,12 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
     environmentId: containerAppsEnvironment.id
     workloadProfileName: 'Consumption'
     configuration: {
+       ingress: {
+        external: false
+        targetPort: 3000
+        transport: 'Auto'
+        allowInsecure: true
+      }
       registries: [
         {
           server: containerRegistry.properties.loginServer
@@ -415,6 +481,10 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
               volumeName: 'goose-config'
               mountPath: '/root/.config'
             }
+            {
+              volumeName: 'goose-workspace'
+              mountPath: '/workspace'
+            }
           ]
         }
       ]
@@ -435,10 +505,92 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
           storageName: gooseConfigStorage.name
           mountOptions: 'vers=4.1'
         }
+        {
+          name: 'goose-workspace'
+          storageType: 'NfsAzureFile'
+          storageName: gooseWorkspaceStorage.name
+          mountOptions: 'vers=4.1'
+        }
       ]
     }
   }
 }
+
+
+resource nginxAuthProxyApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
+  name: nginxAuthProxyAppName
+  location: location
+  tags: {'azd-service-name': 'nginx-auth-proxy'}
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentity.id}': {}
+    }
+  }
+  dependsOn: [
+    seedImages
+    gooseApp
+  ]
+  properties: {
+    environmentId: containerAppsEnvironment.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 80
+        transport: 'Auto'
+        allowInsecure: false
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          identity: userAssignedIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'basic-auth-password'
+          value: proxyAuthPassword
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'nginx-auth-proxy'
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          env: [
+            {
+              name: 'BACKEND_URL'
+              value: 'http://${gooseApp.properties.configuration.ingress.fqdn}'
+            }
+            {
+              name: 'BASIC_AUTH_USER'
+              value: proxyAuthUser
+            }
+            {
+              name: 'BASIC_AUTH_PASSWORD'
+              secretRef: 'basic-auth-password'
+            }
+            {
+              name: 'BACKEND_TIMEOUT'
+              value: '600'
+            }
+          ]
+          resources: {
+            cpu: '0.5'
+            memory: '1Gi'
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+    }
+  }
+}
+
 
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.properties.loginServer
 output AZURE_CONTAINER_REGISTRY_NAME string = containerRegistry.name
@@ -447,3 +599,4 @@ output AZURE_CONTAINER_APPS_ENVIRONMENT_NAME string = containerAppsEnvironment.n
 output ACA_ENVIRONMENT_IDENTITY_ID string = userAssignedIdentity.id
 output GOOSE_APP_NAME string = gooseApp.name
 output OLLAMA_APP_NAME string = ollamaApp.name
+output NGINX_AUTH_PROXY_APP_NAME string = nginxAuthProxyApp.name

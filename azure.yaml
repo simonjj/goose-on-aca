@@ -14,7 +14,17 @@ infra:
   provider: bicep
   path: infra
   module: main
+  parameters:
+    proxyAuthPassword:
+      value: ${PROXY_AUTH_PASSWORD}
 
+hooks:
+  preprovision:
+    run: ./hooks/set-proxy-password.sh
+    shell: sh
+    windows:
+      run: ./hooks/set-proxy-password.ps1
+      shell: pwsh
 
 services:
   goose-agent:
@@ -24,5 +34,10 @@ services:
   
   ollama:
     project: ./app/ollama
+    host: containerapp
+    language: docker
+
+  nginx-auth-proxy:
+    project: ./app/nginx-auth-proxy
     host: containerapp
     language: docker

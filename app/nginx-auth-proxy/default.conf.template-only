@@ -6,8 +6,9 @@ server {
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
-        proxy_pass ${BACKEND_URL};
-        proxy_set_header Host $host;
+        # BACKEND_URL is actually just the host
+        proxy_pass http://${BACKEND_URL};
+        proxy_set_header Host ${BACKEND_URL};
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

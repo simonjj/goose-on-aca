@@ -18,6 +18,9 @@ param proxyAuthUser string = 'admin'
 @secure()
 param proxyAuthPassword string
 
+@description('Flag indicating whether diagnostic logging should be enabled')
+param enableDebugging bool = false
+
 var baseName = toLower('${environmentName}-${resourceToken}')
 var sanitized = toLower(replace(replace(environmentName, '-', ''), '_', ''))
 var sanitizedBase = empty(sanitized) ? 'env' : sanitized
@@ -28,6 +31,8 @@ var containerAppsEnvironmentName = 'cae-${baseName}'
 var ollamaAppName = 'ollama-${baseName}'
 var gooseAppName = 'goose-${baseName}'
 var nginxAuthProxyAppName = 'proxy-${baseName}'
+var logAnalyticsWorkspaceName = 'log-${baseName}'
+var storagePrivateLinkFqdn = '${storageAccountName}.privatelink.file.${environment().suffixes.storage}'
 var seedScript = format('az account set --subscription {0}\nsleep 60\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image goose-agent:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image ollama:latest\naz acr import --resource-group {1} --name {2} --source mcr.microsoft.com/azuredocs/containerapps-helloworld:latest --image nginx-auth-proxy:latest', subscription().subscriptionId, resourceGroup().name, containerRegistryName)
 
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-06-01' = {
@@ -226,10 +231,23 @@ resource storagePrivateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/priv
   }
 }
 
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = if (enableDebugging) {
+  name: logAnalyticsWorkspaceName
+  location: location
+  properties: {
+    retentionInDays: 30
+    features: {
+      enableLogAccessUsingOnlyResourcePermissions: true
+    }
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
+}
+
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerAppsEnvironmentName
   location: location
-  properties: {
+  properties: union({
     vnetConfiguration: {
       infrastructureSubnetId: '${virtualNetwork.id}/subnets/aca-subnet'
     }
@@ -243,7 +261,15 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01'
         workloadProfileType: 'Consumption-GPU-NC8as-T4'
       }
     ]
-  }
+  }, enableDebugging ? {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalyticsWorkspace.properties.customerId
+        sharedKey: listKeys(logAnalyticsWorkspace.id, '2020-08-01').primarySharedKey
+      }
+    }
+  } : {})
 }
 
 
@@ -252,7 +278,7 @@ resource gooseLocalStorage 'Microsoft.App/managedEnvironments/storages@2025-02-0
   name: 'goose-local-storage'
   properties: {
     nfsAzureFile: {
-      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      server: storagePrivateLinkFqdn
       shareName: '/${storageAccount.name}/${gooseLocalShare.name}'
       accessMode: 'ReadWrite'
     }
@@ -264,7 +290,7 @@ resource gooseConfigStorage 'Microsoft.App/managedEnvironments/storages@2025-02-
   name: 'goose-config-storage'
   properties: {
     nfsAzureFile: {
-      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      server: storagePrivateLinkFqdn
       shareName: '/${storageAccount.name}/${gooseConfigShare.name}'
       accessMode: 'ReadWrite'
     }
@@ -276,7 +302,7 @@ resource gooseWorkspaceStorage 'Microsoft.App/managedEnvironments/storages@2025-
   name: 'goose-workspace-storage'
   properties: {
     nfsAzureFile: {
-      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      server: storagePrivateLinkFqdn
       shareName: '/${storageAccount.name}/${gooseWorkspaceShare.name}'
       accessMode: 'ReadWrite'
     }
@@ -288,7 +314,7 @@ resource ollamaModelStorage 'Microsoft.App/managedEnvironments/storages@2025-02-
   name: 'ollama-model-storage'
   properties: {
     nfsAzureFile: {
-      server: '${storageAccountName}.privatelink.file.core.windows.net'
+      server: storagePrivateLinkFqdn
       shareName: '/${storageAccount.name}/${ollamaModelShare.name}'
       accessMode: 'ReadWrite'
     }
@@ -355,6 +381,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
       ingress: {
         external: false
         targetPort: 11434
+        allowInsecure: true
       }
       registries: [
         {
@@ -367,12 +394,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
       initContainers: [
         {
           name: 'ollama-prefetch'
-          image: 'docker.io/ollama/ollama'
-          command: [
-            '/bin/sh'
-            '-c'
-            'set -euo pipefail; ollama pull qwen3:14b'
-          ]
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
           resources: {
             cpu: 2
             memory: '4Gi'
@@ -388,7 +410,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
       containers: [
         {
           name: 'ollama'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          image: 'docker.io/ollama/ollama'
           env: [
             {
               name: 'OLLAMA_CONTEXT_LENGTH'
@@ -529,7 +551,6 @@ resource nginxAuthProxyApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
   }
   dependsOn: [
     seedImages
-    gooseApp
   ]
   properties: {
     environmentId: containerAppsEnvironment.id
@@ -562,7 +583,7 @@ resource nginxAuthProxyApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
           env: [
             {
               name: 'BACKEND_URL'
-              value: 'http://${gooseApp.properties.configuration.ingress.fqdn}'
+              value: format('{0}', gooseApp.properties.configuration.ingress.fqdn)
             }
             {
               name: 'BASIC_AUTH_USER'
@@ -600,3 +621,4 @@ output ACA_ENVIRONMENT_IDENTITY_ID string = userAssignedIdentity.id
 output GOOSE_APP_NAME string = gooseApp.name
 output OLLAMA_APP_NAME string = ollamaApp.name
 output NGINX_AUTH_PROXY_APP_NAME string = nginxAuthProxyApp.name
+output LOG_ANALYTICS_WORKSPACE_ID string = enableDebugging ? logAnalyticsWorkspace.id : ''

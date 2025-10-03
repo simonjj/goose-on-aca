@@ -29,9 +29,13 @@ start_with_model() {
     wait
 }
 
-# Function to pull model and quit
+# Function to pull model and quit with timeout/retry mechanism
 pull_and_quit() {
     local model="${1:-$DEFAULT_MODEL}"
+    local timeout=60  # 1 minute timeout
+    local max_attempts=10  # Maximum retry attempts
+    local attempt=1
+    
     echo "Starting Ollama server temporarily..."
     ollama serve &
     local server_pid=$!
@@ -40,18 +44,42 @@ pull_and_quit() {
     echo "Waiting for Ollama server to be ready..."
     sleep 5
     
-    # Try to pull the model
-    echo "Pulling model: $model"
-    if ollama pull "$model"; then
-        echo "Successfully pulled model: $model"
-    else
-        echo "Failed to pull model: $model"
+    # Retry loop with timeout
+    while [ $attempt -le $max_attempts ]; do
+        echo "Attempt $attempt/$max_attempts: Pulling model $model (timeout: ${timeout}s)"
+        
+        # Start the pull command in background
+        timeout $timeout ollama pull "$model" &
+        local pull_pid=$!
+        
+        # Wait for the pull command to complete or timeout
+        if wait $pull_pid 2>/dev/null; then
+            echo "Successfully pulled model: $model"
+            break
+        else
+            local exit_code=$?
+            if [ $exit_code -eq 124 ]; then
+                echo "Pull attempt $attempt timed out after ${timeout}s, retrying..."
+            else
+                echo "Pull attempt $attempt failed with exit code $exit_code, retrying..."
+            fi
+            
+            # Kill any remaining ollama pull processes
+            pkill -f "ollama pull" 2>/dev/null || true
+            sleep 2
+            
+            attempt=$((attempt + 1))
+        fi
+    done
+    
+    if [ $attempt -gt $max_attempts ]; then
+        echo "Failed to pull model $model after $max_attempts attempts"
     fi
     
     echo "Shutting down Ollama server..."
     kill $server_pid
     wait $server_pid 2>/dev/null || true
-    echo "Model pull complete. Container will exit."
+    echo "Model pull process complete. Container will exit."
 }
 
 # Parse command line arguments

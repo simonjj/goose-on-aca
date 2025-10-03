@@ -10,7 +10,6 @@ param environmentName string
 param resourceToken string
 
 
-
 @description('Username for nginx auth proxy basic authentication')
 param proxyAuthUser string = 'admin'
 
@@ -361,90 +360,16 @@ resource acrContributorAssignment 'Microsoft.Authorization/roleAssignments@2020-
   }
 }
 
-resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
-  name: ollamaAppName
-  location: location
-  tags: {'azd-service-name': 'ollama'}
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${userAssignedIdentity.id}': {}
-    }
-  }
-  dependsOn: [
-    seedImages
-  ]
-  properties: {
-    environmentId: containerAppsEnvironment.id
-    workloadProfileName: 'GPU'
-    configuration: {
-      ingress: {
-        external: false
-        targetPort: 11434
-        allowInsecure: true
-      }
-      registries: [
-        {
-          server: containerRegistry.properties.loginServer
-          identity: userAssignedIdentity.id
-        }
-      ]
-    }
-    template: {
-      initContainers: [
-        {
-          name: 'ollama-prefetch'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-          resources: {
-            cpu: 2
-            memory: '4Gi'
-          }
-          volumeMounts: [
-            {
-              volumeName: 'ollama-models'
-              mountPath: '/root/.ollama'
-            }
-          ]
-        }
-      ]
-      containers: [
-        {
-          name: 'ollama'
-          image: 'docker.io/ollama/ollama'
-          env: [
-            {
-              name: 'OLLAMA_CONTEXT_LENGTH'
-              value: '32768'
-            }
-            {
-                name: 'OLLAMA_KEEP_ALIVE'
-                value: '15m'
-            }
-          ]
-          resources: {
-            cpu: 8
-            memory: '56Gi'
-          }
-          volumeMounts: [
-            {
-              volumeName: 'ollama-models'
-              mountPath: '/root/.ollama'
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 1
-      }
-      volumes: [
-        {
-          name: 'ollama-models'
-          storageType: 'NfsAzureFile'
-          storageName: ollamaModelStorage.name
-        }
-      ]
-    }
+// Deploy ollama app as a separate module
+module ollamaModule './ollama.bicep' = {
+  name: 'ollama-deployment'
+  params: {
+    environmentName: containerAppsEnvironment.name
+    ollamaAppName: ollamaAppName
+    userAssignedIdentityId: userAssignedIdentity.id
+    containerAppsEnvironmentId: containerAppsEnvironment.id
+    containerRegistryEndpoint: containerRegistry.properties.loginServer
+    ollamaModelStorageName: ollamaModelStorage.name
   }
 }
 
@@ -460,6 +385,7 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
   }
   dependsOn: [
     seedImages
+    ollamaModule
   ]
   properties: {
     environmentId: containerAppsEnvironment.id
@@ -487,7 +413,7 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
           env: [
             {
               name: 'OLLAMA_HOST'
-              value: '${ollamaApp.properties.configuration.ingress.fqdn}'
+              value: 'http://ollama-${baseName}:11434'
             }
           ]
           resources: {
@@ -599,7 +525,7 @@ resource nginxAuthProxyApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
             }
           ]
           resources: {
-            cpu: '0.5'
+            cpu: json('0.5')
             memory: '1Gi'
           }
         }
@@ -619,6 +545,12 @@ output AZURE_CONTAINER_APPS_ENVIRONMENT_ID string = containerAppsEnvironment.id
 output AZURE_CONTAINER_APPS_ENVIRONMENT_NAME string = containerAppsEnvironment.name
 output ACA_ENVIRONMENT_IDENTITY_ID string = userAssignedIdentity.id
 output GOOSE_APP_NAME string = gooseApp.name
-output OLLAMA_APP_NAME string = ollamaApp.name
+output OLLAMA_APP_NAME string = ollamaAppName
 output NGINX_AUTH_PROXY_APP_NAME string = nginxAuthProxyApp.name
 output LOG_ANALYTICS_WORKSPACE_ID string = enableDebugging ? logAnalyticsWorkspace.id : ''
+output LOCATION string = location
+output USER_ASSIGNED_IDENTITY object = userAssignedIdentity
+output CONTAINER_REGISTRY object = containerRegistry
+output CONTAINER_APPS_ENVIRONMENT object = containerAppsEnvironment
+output OLLAMA_MODEL_STORAGE object = ollamaModelStorage
+output SEED_IMAGES object = seedImages

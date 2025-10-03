@@ -18,25 +18,12 @@ infra:
     proxyAuthPassword:
       value: ${PROXY_AUTH_PASSWORD}
 
-hooks:
-  preprovision:
-    run: ./hooks/set-proxy-password.sh
-    shell: sh
-    windows:
-      run: ./hooks/set-proxy-password.ps1
-      shell: pwsh
-
 services:
   goose-agent:
     project: ./app/goose
     host: containerapp
     language: docker
   
-  ollama:
-    project: ./app/ollama
-    host: containerapp
-    language: docker
-
   nginx-auth-proxy:
     project: ./app/nginx-auth-proxy
     host: containerapp

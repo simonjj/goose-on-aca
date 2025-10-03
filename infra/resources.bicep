@@ -413,7 +413,7 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
           env: [
             {
               name: 'OLLAMA_HOST'
-              value: 'http://ollama-${baseName}:11434'
+              value: 'http://${ollamaModule.outputs.OLLAMA_HOST}'
             }
           ]
           resources: {

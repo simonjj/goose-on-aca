@@ -95,3 +95,6 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
     }
   }
 }
+
+
+output OLLAMA_HOST string = ollamaApp.properties.configuration.ingress.fqdn

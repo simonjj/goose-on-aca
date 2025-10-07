@@ -415,6 +415,26 @@ resource gooseApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
               name: 'OLLAMA_HOST'
               value: 'http://${ollamaModule.outputs.OLLAMA_HOST}'
             }
+            {
+              name: 'GITHUB_PERSONAL_ACCESS_TOKEN'
+              value: 'NA'
+            }
+            {
+              name: 'MCP_EMAIL_SERVER_EMAIL_ADDRESS'
+              value: 'NA'
+            }
+            {
+              name: 'MCP_EMAIL_SERVER_USER_NAME'
+              value: 'NA'
+            }
+            {
+              name: 'MCP_EMAIL_SERVER_PASSWORD'
+              value: 'NA'
+            }
+            {
+              name: 'MCP_EMAIL_SERVER_FULL_NAME'
+              value: 'NA'
+            }
           ]
           resources: {
             cpu: 2

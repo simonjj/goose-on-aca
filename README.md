@@ -79,7 +79,15 @@ az containerapp update \
     MCP_EMAIL_SERVER_USER_NAME="your-email@gmail.com"
 ```
 
+### 5. Delete your deployment (Optional)
 
+If you need to delete your Azure deployment, you can quickly do so using the following command:
+
+```bash
+azd down
+```
+
+This will remove all resources associated with the project from your Azure subscription.
 
 ## Overall Architecture
 

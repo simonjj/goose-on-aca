@@ -37,7 +37,7 @@ azd up
 >  - **Australia East**
 >  - **Sweden Central**
 >  - **[See here for the latest GPU region availability](https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview#gpu-workload-profiles)**
-  
+>  
 
 ### 3. Access your deployment
 
@@ -55,7 +55,7 @@ To enable GitHub or Email MCP servers, update the environment variables in your 
 
 > **Important Note**
 > The current default model optimized to run on T4 (qwen3:14b) does not work with the Github MCP server (both stdio and streaming). It is hence suggested to upgrade both GPU profile and model if the user intends to use the Github MCP server.
->
+> 
 > The default email provider is currently configured to be Gmail. The full configuration for the email servers (SMTP/IMAP), ports, SSL can be accessed via the default Goose configuration file located on the NFS file share (`/root/.config/goose/config.yaml`).
 
 
@@ -79,7 +79,21 @@ az containerapp update \
     MCP_EMAIL_SERVER_USER_NAME="your-email@gmail.com"
 ```
 
+### Delete Instructions
 
+If you need to remove the deployment and clean up resources, follow these steps:
+
+```bash
+# Tear down the Azure deployment (prompts for confirmation)
+azd down
+
+# If you want to delete the entire resource group (replace <resource-group-name>)
+az group delete --name <resource-group-name> --yes --no-wait
+```
+
+These commands will remove the Container App, associated Azure resources, and the NFS file share.
+
+```
 
 ## Overall Architecture
 
@@ -143,89 +157,4 @@ graph TB
     class EmailMCP,GitHubMCP,ComputerMCP,DeveloperMCP mcp
     class Files infra
     class GPU gpu
-
 ```
-
-### Core Services
-
-1. **🤖 Goose Agent** (`app/goose/`)
-   - AI agent service with web UI and CLI access
-   - Supports multiple MCP (Model Context Protocol) servers
-   - Persistent configuration and session storage
-   - **[📖 Goose Component Documentation](app/goose/README.md)**
-
-2. **🔒 Nginx Auth Proxy** (`app/nginx-auth-proxy/`)
-   - Authentication gateway with basic auth
-   - Request routing and timeout management
-   - **[📖 Proxy Component Documentation](app/nginx-auth-proxy/README.md)**
-
-3. **🧠 Ollama Model Puller and Server**
-   - This pulls (via init container) and serves the model
-   - Via Ollama this supports various [open-source models](https://ollama.com/library) (current default: qwen3:14b)
-   - Runs on T4 Consumption GPU
-   - Model Puller is included but not build as part of this project. [Please see README for more information.](app/ollama-image-pull/README.md)
-
-
-
-## MCP Server Extensions
-
-Goose has support for many MCP servers (also called Extensions). [To see a full list of extensions visit Goose's extension library](https://block.github.io/goose/docs/category/mcp-servers). For this instance of Goose agent we've included multiple MCP servers for enhanced capabilities:
-
-- **📧 Email MCP** - Send and receive emails via IMAP/SMTP. [See here for full documentation.](https://github.com/ai-zerolab/mcp-email-server?tab=readme-ov-file)
-- **🐙 GitHub MCP** - Repository management, issues, and pull requests. [See here for full documentation.](https://github.com/github/github-mcp-server)
-- **💻 Computer Controller MCP** - System automation and file operations. [See here for full documenttion.](https://block.github.io/goose/docs/mcp/computer-controller-mcp)
-- **👨‍💻 Developer Tools MCP** - Shell Terminal Commands. [See here for full documentation.](https://block.github.io/goose/docs/mcp/developer-mcp)
-
-Simply calling `goose configure` via the Azure Container App's Portal Console option. Will provide a guided experience to enable more extensions.
-
-
-
-## Project Structure
-
-```
-goose-on-aca/
-├── 📋 azure.yaml              # Azure Developer CLI configuration
-├── 📋 README.md               # This file
-├── 🐳 app/                    # Application components
-│   ├── 🤖 goose/             # Goose AI agent service
-│   ├── 🔒 nginx-auth-proxy/   # Authentication proxy
-│   └── 🧠 ollama-image-pull/  # Model puller and server
-├── 🏗️ infra/                  # Infrastructure as Code (Bicep)
-│   ├── main.bicep            # Main deployment template
-│   ├── resources.bicep       # Core Azure resources
-│   └── ollama.bicep          # GPU model server
-└── 📚 docs/                   # Additional documentation
-```
-
-
-
-## Additional Notes & TODOs
-
-### TODOs
-
-- **Entra ID Authentication** - Replace basic auth with Azure AD integration
-- **Consolidated Storage** - Optimize file storage architecture for better performance
-- **Azure CLI MCP Server** - Direct Azure resource management from Goose
-- **Enhanced GPU Support and model flexibility** - Support for A100 and alternate models such as GLM or Kimi
-- **OpenAI API Integration** - Hybrid cloud/local model support
-
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Solution | 
-|-------|----------|
-| Deployment hangs | One of the most reliable ways to asses deployment state is the portal's Revisions and replicas view. For this application the deployment of the Ollama model puller and server take the longest. This is because the model for the server first gets pulled via a init container. Model download can take anywhere between 3 and 10 minutes. Thereafter the Ollama model server loads the model via the NFS file share which can take another 3 to 5 minutes. |
-| Goose seems to be hanging / doesn't respond | Check to see if the model has been loaded on the Ollama app by running `ollama ps`. If the model has been loaded you can check for GPU activity by running `nvidia-smi`. | 
-| The agent is confused, slow, doesn't do what I want it to | Goose's capabilities and effectiveness depends entirely on the chosen model. Using the default qwen3:14b model results in decent outcomes but can not compete with more capable models. Try configuring Goose via the `goose configure` command to use a different model |
-
-
-## Contributing & Issues
-
-Changes and improvements are welcome via pull requests. For an issues you find or quetions you may have please feel free to [raise an issue](https://github.com/simonjj/goose-on-aca/issues).
-
-
-## License
-
-This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.

@@ -28,3 +28,5 @@ services:
     project: ./app/nginx-auth-proxy
     host: containerapp
     language: docker
+
+  # TODO: integrate ollama-image-pull here again

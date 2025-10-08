@@ -1,0 +1,9 @@
+pandas
+requests
+PyYAML
+tabulate
+numpy
+scipy
+mcp-email-server
+uv
+#azure-cli

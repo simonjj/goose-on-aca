@@ -15,7 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 libx11-6 \
     curl ca-certificates bzip2 tini \
-    openssh-client \
+    openssh-client iputils-ping \
     git vim nano wget unzip \
     python3 python3-pip python3-venv \
     build-essential \

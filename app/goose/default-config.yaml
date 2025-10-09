@@ -1,4 +1,4 @@
-GOOSE_MODEL: qwen3:14b
+GOOSE_MODEL: gpt-oss:20b
 GOOSE_PROVIDER: ollama
 extensions:
   computercontroller:

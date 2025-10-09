@@ -43,6 +43,7 @@ resource ollamaApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
           name: 'ollama-prefetch'
           // we use a prebuild container that pulls the models we need
           image: 'ghcr.io/simonjj/ollama-model-pull:3102025-1240'
+          args: ['pull', 'gpt-oss:20b']
           resources: {
             cpu: 2
             memory: '4Gi'

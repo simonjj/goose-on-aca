@@ -1,11 +1,22 @@
+![all logo](./misc/all-logo.png)
+
 # Goose on Azure Container Apps
 
 ## Overview
 
 This project provides a solution for deploying [Goose AI Agent](https://block.github.io/goose/) as an Azure Container App with GPU support (T4). It is intended to be ready to use with minimal user input and small service surface area. It leverages open source models and packages everything needed to have a functional agent deployed and ready-to-use once deployed. Starting the deployment should take no more than five minutes, the deployment itself should be complete and fully functional in 25 minutes.
 
+Depending on the paired model, the agent has the ability to work as alongside you to:
+- Collect Github issues and triage them
+- Make code edits and submit PRs
+- Analyze data and send out a summary via email
+- Autonomously check a email inbox on a schedule and produce a simple reply
+- SSH into a remote system and grab the top CPU consumers
+
 
 ## Installation & Setup
+
+![azd up output](./misc/deploy-summary.png)
 
 ### Prerequisites
 
@@ -34,14 +45,14 @@ azd up
 > * Proxy Auth Password will become your basic auth password
 > * Please remember this template is currently intended to run model inference on Consumption > > GPU workload profiles which are only available in select regions:
 >   - **West US 3**
->  - **Australia East**
->  - **Sweden Central**
->  - **[See here for the latest GPU region availability](https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview#gpu-workload-profiles)**
+>   - **Australia East**
+>   - **Sweden Central**
+>   - **[See here for the latest GPU region availability](https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview#gpu-workload-profiles)**
   
 
 ### 3. Access your deployment
 
-After successful deployment, access URLs will be displayed:
+After successful deployment, access URLs will be displayed or can be displayed be running:
 
 ```bash
 # Get deployment status and URLs
@@ -79,6 +90,12 @@ az containerapp update \
     MCP_EMAIL_SERVER_USER_NAME="your-email@gmail.com"
 ```
 
+### 5. Delete the deployment
+Deleting the deployment can be achieved by running:
+
+```bash
+azd down
+```
 
 
 ## Overall Architecture
@@ -219,6 +236,7 @@ goose-on-aca/
 | Deployment hangs | One of the most reliable ways to asses deployment state is the portal's Revisions and replicas view. For this application the deployment of the Ollama model puller and server take the longest. This is because the model for the server first gets pulled via a init container. Model download can take anywhere between 3 and 10 minutes. Thereafter the Ollama model server loads the model via the NFS file share which can take another 3 to 5 minutes. |
 | Goose seems to be hanging / doesn't respond | Check to see if the model has been loaded on the Ollama app by running `ollama ps`. If the model has been loaded you can check for GPU activity by running `nvidia-smi`. | 
 | The agent is confused, slow, doesn't do what I want it to | Goose's capabilities and effectiveness depends entirely on the chosen model. Using the default qwen3:14b model results in decent outcomes but can not compete with more capable models. Try configuring Goose via the `goose configure` command to use a different model |
+| The agent seems to be missing tools | Since Goose starts all MCP servers, misconfiguration for any MCP server can lead to none of them starting. In order to check the running processes use the console and run `ps aux` to make sure all the desired servers are running. |
 
 
 ## Contributing & Issues

@@ -2,6 +2,9 @@
 
 This directory contains the containerized setup for the Goose AI agent, configured to run with MCP (Model Context Protocol) servers for enhanced capabilities.
 
+> **Important Note**
+> The quality and capabilities of Goose's AI agent varies dramatically based on model choice. For production use-cases where prompts are sparse, tool use sequences longer and context windows need to be larger we suggest the use a hosted OpenAI model. [Learn more on how models can be switched below]().
+
 
 ## Building and Testing Locally
 
@@ -71,7 +74,7 @@ Typically, Goose is configured interactively using:
 ```bash
 goose configure
 ```
-This creates configuration files in `~/.config/goose/config.yaml`.
+This creates a configuration file in `~/.config/goose/config.yaml`.
 
 
 ### This Image Dynamic Configuration
@@ -82,9 +85,11 @@ This project uses a **dynamic configuration** via `handle-default-config.sh`:
 3. **Dynamic Generation**: Only regenerates config when environment changes
 4. **Selective Activation**: MCP servers are only enabled when their credentials are provided
 
+
 ### Always-Enabled Extensions
 - **Computer Controller** (`computercontroller`) - System automation and control
 - **Developer Tools** (`developer`) - Development utilities and shell access
+
 
 ### Disabled MCP Servers (Enabled on Demand)
 #### Email MCP Server (`zerolib-email`)
@@ -104,8 +109,19 @@ This project uses a **dynamic configuration** via `handle-default-config.sh`:
 - **Toolsets**: `repos,issues,pull_requests`
 
 
-### Persistence Directories
+### Switch to Azure OpenAI Model
+For Goose to use a hosted OpenAI model on Azure. Add the following configuration snippet to the configuration file located in `/root/.config/goose/config.yaml`. For guided configuration the `goose configure` command can be used as an alternative. After adjusting the configuration both methods rely on the `AZURE_OPENAI_API_KEY` to be exported as a environment variable.
 
+```bash
+AZURE_OPENAI_DEPLOYMENT_NAME: <NAME_OF_MODEL_DEPLOYMENT>
+GOOSE_PROVIDER: azure_openai
+AZURE_OPENAI_ENDPOINT: https://<PROJECT_NAME>.openai.azure.com/
+GOOSE_MODEL: gpt-4o
+AZURE_OPENAI_API_VERSION: <VERSION_OF_MODEL>
+```
+
+
+### Persistence Directories
 In the commands above and in the Azure templates these directories are mounted for persistence:
 
 ```
@@ -116,11 +132,9 @@ Goose Locations:
 ```
 
 
-
-
 ## Dockerfile Installation Details
 
-The Dockerfile installs:
+The Dockerfile installs the following packages for the agent to use:
 
 ### Base System
 - **Ubuntu 24.04** as the base image
@@ -138,7 +152,3 @@ The Dockerfile installs:
 - **Goose CLI** installed from official release (stable version)
 - **GitHub MCP server** binary (v0.17.1) for GitHub integration
 - Web UI accessible on port 3000 by default
-
-### Removed Components
-- **Playwright** dependencies removed for container optimization (reduces size significantly)
-- **Multi-stage build** simplified to single-stage for faster builds
